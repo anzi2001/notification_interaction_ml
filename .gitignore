@@ -1,0 +1,6 @@
+
+bin/
+.vscode/
+include/
+lib/
+share/
