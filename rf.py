@@ -29,7 +29,9 @@ TIME_DIFF = 33000
 if __name__ == "__main__":
     files = import_files()
     #show_data(filter_list(files))
-    notification_list = filter_device(files)
+    params = ('activity', 'battery_status', 'location', 'locked', 'volume_mode')
+    notification_list = filter_device(files, params)
+
     notification_list = [item for sublist in notification_list for item in sublist]
     random.shuffle(notification_list)
     #show_data(notification_list)
@@ -38,9 +40,7 @@ if __name__ == "__main__":
     notification_labels = np.array([notification.has_user_interacted() for notification in notification_list])
     ohe = OneHotEncoder(sparse_output=False)
     minmax = MinMaxScaler()
-    notification_data = ohe.fit_transform([item.to_rf_array() for item in notification_list])
-    notification_light = minmax.fit_transform([item.light_lux for item in notification_list])
-    notification_data = np.concatenate((notification_data, notification_light), axis=1)
+    notification_data = ohe.fit_transform([item[params] for item in notification_list])
 
     train_data, test_data, train_labels, test_labels = train_test_split(notification_data, notification_labels, test_size=0.3)
     print("---EVALUATION---")
@@ -50,8 +50,7 @@ if __name__ == "__main__":
     print(accuracy_score(test_labels, rf.predict(test_data)))
     
     #evaluate using accuracy_score
-    #results = lstm_model.evaluate(np.array([item.to_5by5_array() for item in left_out_list], dtype=float), left_out_labels, verbose=2)
-    print("---MANUAL EVALUATION---")
+    print("---BASELINE EVALUATION---")
     print(np.average(np.array([notification.has_user_interacted() for notification in notification_list])))
     print(np.average(np.array([not notification.has_user_interacted() for notification in notification_list])))
 
