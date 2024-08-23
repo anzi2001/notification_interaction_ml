@@ -4,3 +4,5 @@ bin/
 include/
 lib/
 share/
+learn/__pycache__/
+__pycache__
