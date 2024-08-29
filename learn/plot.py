@@ -62,3 +62,5 @@ def show_data(notification_list):
         if notification.interaction_time is not None:
             response_time.append((notification.interaction_time - notification.posted_time) / 1000)
     print(f"Median response time: {np.median(response_time)}")
+
+

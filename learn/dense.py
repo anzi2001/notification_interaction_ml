@@ -13,8 +13,11 @@ def create_dense(shape: int):
         tf.keras.layers.Dense(2, activation=tf.nn.softmax)
     ])
 
-def train_dense(model, notification_list: np.ndarray, notification_labels: list):
-    stop_early = tf.keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True, min_delta=0.001,)
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss='categorical_crossentropy', metrics=['accuracy'])
-    history = model.fit(notification_list, notification_labels, epochs=200, batch_size=8, validation_split=0.2, class_weight=class_weights)
+def train_dense(model, notification_list: np.ndarray, notification_labels: list, board_callback=None):
+    callbacks = []
+    if board_callback is not None:
+        callbacks.append(board_callback)
+    #stop_early = tf.keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True, min_delta=0.001,)
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    history = model.fit(notification_list, notification_labels, epochs=50, batch_size=16, validation_split=0.2)
     return model, history

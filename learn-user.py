@@ -1,48 +1,49 @@
 import tensorflow as tf
-import keras
-from collections import defaultdict
 import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime
 from sklearn.model_selection import train_test_split
 from data import *
-import random
-from sklearn.preprocessing import OneHotEncoder
 import learn.dense as dense
+from data import *
 
-
-def to_hot_encoded_numpy(notification_list: list[DataRow]):
-    #encoder = ColumnTransformer([('encoder', OneHotEncoder(sparse_output=False), [0, 1, 3, 5, 6, 7])], remainder='passthrough')
-    encoder = OneHotEncoder(sparse_output=False)
-    array_list = encoder.fit_transform([notification.to_rf_array() for notification in notification_list])
-    #print(encoder.get_feature_names_out())
-    return array_list
-    
 TIME_DIFF = 33000
 
 if __name__ == "__main__":
-    files = import_files()
-    notification_list = filter_device(files)
-    #show_data(notification_list)
-    for device_notif in notification_list:
-        if(len(device_notif) == 0):
-            continue
-        
-        device_notif_copy = device_notif.copy()
-        random.shuffle(device_notif_copy)
-        notification_labels = np.array([notification.has_user_interacted() for notification in device_notif_copy])
+    data = load_data()
+    data = merge_data(*data)
 
-        device_notif_copy = to_hot_encoded_numpy(device_notif_copy)
-        train_data, test_data, train_labels, test_labels = train_test_split(device_notif_copy, notification_labels, test_size=0.3)
-        model, history = dense.train_dense(train_data, train_labels)
+    for device,deviceData in data.groupby("device_id"):
+        if len(deviceData) == 0:
+            continue
+
+        scaler, encoder = fit_data(deviceData)
+        labels = process_labels(deviceData)
+
+        train_data, test_data, train_labels, test_labels = train_test_split(
+            deviceData, labels, test_size=0.25, random_state=42, stratify=labels
+        )
+
+        train_data = preprocess_data(train_data, scaler, encoder)
+        test_data = preprocess_data(test_data, scaler, encoder)
+
+        model = tf.keras.models.Sequential([
+            tf.keras.layers.Input(shape=(train_data.shape[1],)),
+            tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+            tf.keras.layers.Dropout(0.1),
+            tf.keras.layers.Dense(512, activation=tf.nn.leaky_relu, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+            tf.keras.layers.Dropout(0.1),
+            tf.keras.layers.Dense(64, activation=tf.nn.leaky_relu, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+            tf.keras.layers.Dense(32, activation=tf.nn.leaky_relu, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+            tf.keras.layers.Dense(1, activation=tf.nn.sigmoid)
+        ])
+
+        model, history = dense.train_dense(model, train_data, train_labels)
 
         print("---EVALUATION---")
         #for i in range(len(test_data)):
         #    print(f"Predicted: {model.predict(np.array([test_data[i]], dtype=float))} Actual: {test_labels[i]}")
-        model.evaluate(test_data, test_labels, verbose=2, batch_size=2)
+        model.evaluate(test_data, test_labels, verbose=2)
 
         print("---MANUAL EVALUATION---")
-        print(np.average(test_labels))
-        print(1 - np.average(test_labels))
+        print(np.mean(test_labels), 1 - np.mean(test_labels))
         print()
     

@@ -33,9 +33,7 @@ if __name__ == "__main__":
             notification_num += 1
         if notification_num > 0:
             print(f"Device {key} has {notification_num} notifications")
-    #show_data(filter_list(files))
     notification_list = filter_device(files)
-    #show_data(notification_list)
     for device_notif in notification_list:
         ohe = OneHotEncoder(sparse_output=False)
         minmax = MinMaxScaler()

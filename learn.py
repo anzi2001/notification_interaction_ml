@@ -6,12 +6,11 @@ from data import *
 from learn.dense import create_dense, train_dense
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import OrdinalEncoder
 from sklearn.model_selection import train_test_split
-from learn.plot import show_history
 import gen_tflite as gen
-import os
 
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
+#os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 NUM_FEATURES = 14
 
@@ -24,23 +23,55 @@ class TfLiteModel(gen.BaseTFLiteModel):
         self.model = create_dense(NUM_FEATURES)
         self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss=tf.keras.losses.BinaryCrossentropy(), metrics=['accuracy'])
 
+encoder = OneHotEncoder(sparse_output=False)
+ordinal = OrdinalEncoder(categories=[["Other","Work","Home"]])
+scaler = MinMaxScaler()
+
+def modify_attribs(data):
+    location = [row.location for row in data]
+    volume_mode = [row.volume_mode for row in data]
+    activity = [row.activity for row in data]
+    locked = [int(not row.locked) * 2 for row in data]
+
+    interaction_time = [ datetime.fromtimestamp(row.interaction_time / 1000).hour for row in data]
+    interaction_time = scaler.transform(np.array(interaction_time).reshape(-1, 1)).flatten()
+    
+    ordinal_data = ordinal.transform(np.array(location).reshape(-1, 1))
+    categorical_data = np.array([volume_mode, activity]).T
+    categorical_encoded = encoder.transform(categorical_data)
+    print(location)
+    print(ordinal_data)
+
+    result = []
+    for i in range(len(data)):
+        result.append(np.concatenate((
+            [interaction_time[i], locked[i]],
+            categorical_encoded[i],
+            ordinal_data[i], 
+        )).tolist())
+
+    return result
 
 
 if __name__ == "__main__":
     files = import_files()
-    params = ('activity', 'battery_status', 'location', 'locked', 'volume_mode')
+    params = ('activity', 'location', 'volume_mode', "locked", 'interaction_time')
     notification_list = filter_device(files, params)
     notification_list = [item for sublist in notification_list for item in sublist]
-    random.shuffle(notification_list)
-    notification_labels = np.array([(notification.has_user_interacted(), not notification.has_user_interacted()) for notification in notification_list], dtype=np.float32)
-    ohe = OneHotEncoder(sparse_output=False)
-    print(len(notification_list))
-    print(np.average([not notification.has_user_interacted() for notification in notification_list]))
-    notification_data = ohe.fit_transform([item[params] for item in notification_list])
-    train_data, test_data, train_labels, test_labels = train_test_split(notification_data, notification_labels, test_size=0.3, stratify=notification_labels)
+    encoder.fit(np.array([[notification.volume_mode, notification.activity] for notification in notification_list]))
+    if "location" in params:
+        ordinal.fit(np.array([notification.location for notification in notification_list]).reshape(-1, 1))
+    if "interaction_time" in params:
+        scaler.fit(np.array([datetime.fromtimestamp(notification.interaction_time / 1000).hour for notification in notification_list]).reshape(-1, 1))
 
-    layer = tf.keras.layers.Normalization(axis=-1)
-    layer.adapt(train_data)
+    notification_labels = np.array([[notification.has_user_interacted(), not notification.has_user_interacted()] for notification in notification_list])
+
+    train_data, test_data, train_labels, test_labels = train_test_split(
+        notification_list, notification_labels, test_size=0.25, random_state=42
+    )
+    
+    train_data = np.array(modify_attribs(train_data))
+    test_data = np.array(modify_attribs(test_data))
 
     if len(sys.argv) > 1 and sys.argv[1] == "save":
         model = TfLiteModel()
@@ -57,15 +88,24 @@ if __name__ == "__main__":
         tflite_model = gen.convert_saved_model("saved_model")
         gen.save_tflite_model(tflite_model, "model.tflite")
 
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="tensorflow", histogram_freq=1)
+
     model = tf.keras.models.Sequential([
         tf.keras.layers.Input(shape=(train_data.shape[1],)),
-        layer,
-        tf.keras.layers.Dense(64, activation=tf.nn.leaky_relu),
-        tf.keras.layers.Dense(32, activation=tf.nn.leaky_relu),
-        tf.keras.layers.Dense(2, activation=tf.nn.softmax)
+        tf.keras.layers.Dense(128, activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(32, activation='relu'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(2, activation='sigmoid')
     ])
+    print(train_data)
 
-    model, history = train_dense(model, train_data, train_labels)
+    model, history = train_dense(model, train_data, train_labels, tensorboard_callback)
     #show_history(history)
 
     print("---EVALUATION---")
