@@ -6,3 +6,4 @@ lib/
 share/
 learn/__pycache__/
 __pycache__
+hyperparameter_tuning/my_project

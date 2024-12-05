@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split 
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score
 from data import *
 
 def show_history(history):
@@ -25,38 +25,60 @@ def show_history(history):
 
 TIME_DIFF = 33000
 
+categorical_features = ['volume', "prox", "screen", "battery", "location", "activity"]
+numerical_features = ["mean_crossing_rate", "variance", "peak", "mean", "spectral_entropy", "ble_cluster", "wifi_cluster"]
+
 if __name__ == "__main__":
-    files = import_files()
-    for key, device in files.items():
-        notification_num = 0
-        for notification in device.values():
-            notification_num += 1
-        if notification_num > 0:
-            print(f"Device {key} has {notification_num} notifications")
-    notification_list = filter_device(files)
-    for device_notif in notification_list:
-        ohe = OneHotEncoder(sparse_output=False)
-        minmax = MinMaxScaler()
+    #create a random forest classifier for each user
+    data = load_data()
+    data = merge_data(*data)
+    labels = process_labels(data)
 
-        notification_labels = np.array([notification.has_user_interacted() for notification in device_notif])
-        notification_data = ohe.fit_transform([item.to_rf_array() for item in device_notif])
-        notification_light = minmax.fit_transform([[item.light_lux] for item in device_notif])
-        #add light data to notification data. Notification data is 2d array, light_data is 1d array.
-        notification_data = np.hstack((notification_data, notification_light))
+    baseline_acc = []
+    rf_acc = []
+    svm_acc = []
 
-        train_data, test_data, train_labels, test_labels = train_test_split(notification_data, notification_labels, test_size=0.3)
-        clf = RandomForestClassifier(max_depth=5, n_estimators=10, max_features=1)
-        clf.fit(train_data,train_labels)
+    encoder = categorical_fit(data, categorical_features)
 
-        print("---EVALUATION---")
-        print(clf.score(test_data, test_labels))
+    for device, deviceData in data.groupby("device_id"):
 
-        print("---MANUAL EVALUATION---")
-        print(np.average(test_labels))
-        print(1 - np.average(test_labels))
+        labels = process_labels(deviceData)
+
+        ble_cluster, wifi_cluster = cluster(deviceData)
+        print(len(deviceData), len(ble_cluster), len(wifi_cluster))
+        deviceData["ble_cluster"] = ble_cluster
+        deviceData["wifi_cluster"] = wifi_cluster
+
+        scaler = numerical_fit(deviceData, numerical_features)
+        
+        train_data, test_data, train_labels, test_labels = train_test_split(
+            deviceData, labels, test_size=0.30, random_state=42
+        )
+
+
+        train_data = preprocess_data(train_data, scaler, encoder, categorical_features, numerical_features)
+        test_data = preprocess_data(test_data, scaler, encoder, categorical_features, numerical_features)
+
+
+        print("Feature count:", train_data.shape)
+
+        rf = RandomForestClassifier(max_depth=3, n_estimators=300, max_features=3)
+        svm = SVC(C=3)
+        svm.fit(train_data, train_labels)
+        rf.fit(train_data, train_labels)
+        baseline_acc.append(np.mean(labels))
+        print(f"Device: {device}, RF Accuracy: {accuracy_score(test_labels, rf.predict(test_data))}")
+        #print(f"Device: {device}, RF Precision: {precision_score(test_labels, rf.predict(test_data))}")
+        print(f"Device: {device}, Baseline Accuracy: {max(np.mean(test_labels), 1 - np.mean(test_labels))}")
+
+        print(f"Device: {device}, SVM Accuracy: {accuracy_score(test_labels, svm.predict(test_data))}")
+        #print(f"Device: {device}, SVM Precision: {precision_score(test_labels, svm.predict(test_data))}")
+        rf_acc.append(accuracy_score(test_labels, rf.predict(test_data)))
+        svm_acc.append(accuracy_score(test_labels, svm.predict(test_data)))
+                       
         print()
 
-    #evaluate using accuracy_score
-    #results = lstm_model.evaluate(np.array([item.to_5by5_array() for item in left_out_list], dtype=float), left_out_labels, verbose=2)
-    
+    print("baseline accuracy:", np.average(baseline_acc))
+    print(f"Average RF Accuracy: {np.average(rf_acc)}")
+    print(f"Average SVM Accuracy: {np.average(svm_acc)}")
 

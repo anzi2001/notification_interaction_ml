@@ -9,10 +9,14 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import OrdinalEncoder
 from sklearn.model_selection import train_test_split
 import gen_tflite as gen
+from datetime import datetime
 
 #os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
-NUM_FEATURES = 14
+categorical_features = [ "prox", "screen",'volume', "battery", "location"]
+numerical_features = []
+
+NUM_FEATURES = 19
 
 @gen.tflite_model_class
 class TfLiteModel(gen.BaseTFLiteModel):
@@ -20,8 +24,17 @@ class TfLiteModel(gen.BaseTFLiteModel):
     Y_SHAPE = [2]
 
     def __init__(self):
-        self.model = create_dense(NUM_FEATURES)
-        self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss=tf.keras.losses.BinaryCrossentropy(), metrics=['accuracy'])
+        inputs = tf.keras.layers.Input(shape=(NUM_FEATURES,))
+        model = tf.keras.layers.Dense(NUM_FEATURES, activation='relu')(inputs)
+        model = tf.keras.layers.Dense(128, activation='relu')(model)
+        model = tf.keras.layers.Dropout(0.6)(model, training=True)
+        model = tf.keras.layers.Dense(256, activation='relu')(model)
+        model = tf.keras.layers.Dropout(0.6)(model, training=True)
+        model = tf.keras.layers.Dense(64, activation='relu')(model)
+        model = tf.keras.layers.Dropout(0.6)(model, training=True)
+        model = tf.keras.layers.Dense(2, activation='sigmoid')(model)
+        self.model = tf.keras.models.Model(inputs=inputs, outputs=model)
+        self.model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.keras.losses.BinaryCrossentropy(), metrics=['accuracy'])
 
 encoder = OneHotEncoder(sparse_output=False)
 ordinal = OrdinalEncoder(categories=[["Other","Work","Home"]])
@@ -54,54 +67,45 @@ def modify_attribs(data):
 
 
 if __name__ == "__main__":
-    files = import_files()
-    params = ('activity', 'location', 'volume_mode', "locked", 'interaction_time')
-    notification_list = filter_device(files, params)
-    notification_list = [item for sublist in notification_list for item in sublist]
-    encoder.fit(np.array([[notification.volume_mode, notification.activity] for notification in notification_list]))
-    if "location" in params:
-        ordinal.fit(np.array([notification.location for notification in notification_list]).reshape(-1, 1))
-    if "interaction_time" in params:
-        scaler.fit(np.array([datetime.fromtimestamp(notification.interaction_time / 1000).hour for notification in notification_list]).reshape(-1, 1))
-
-    notification_labels = np.array([[notification.has_user_interacted(), not notification.has_user_interacted()] for notification in notification_list])
-
-    train_data, test_data, train_labels, test_labels = train_test_split(
-        notification_list, notification_labels, test_size=0.25, random_state=42
-    )
+    data = load_data()
+    data = merge_data(*data)
     
-    train_data = np.array(modify_attribs(train_data))
-    test_data = np.array(modify_attribs(test_data))
+    labels = process_labels(data).map(lambda x: [x, 1-x]).to_list()
+    labels = np.array(labels)
+    scaler, encoder = fit_data(data, categorical_features, numerical_features)
+    train_data, test_data, train_labels, test_labels = train_test_split(
+        data, labels, test_size=0.25, random_state=42
+    )
+
+    train_data = preprocess_data(train_data, scaler, encoder, categorical_features, numerical_features)
+    test_data = preprocess_data(test_data, scaler, encoder, categorical_features, numerical_features)
+    print(train_data.shape)
+
+
 
     if len(sys.argv) > 1 and sys.argv[1] == "save":
         model = TfLiteModel()
-        train_ds = tf.data.Dataset.from_tensor_slices((train_data, train_labels)).batch(8)
-        for epoch in range(10):
-            num_batches = 0
-            epoch_loss = 0
-            for x, y in train_ds:
-                epoch_loss = model.train(x, y)
-                num_batches += 1
-            print(f"Epoch {epoch} Loss: {epoch_loss}")
-        
         gen.save_model(model, "saved_model")
         tflite_model = gen.convert_saved_model("saved_model")
         gen.save_tflite_model(tflite_model, "model.tflite")
+        exit()
 
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="tensorflow", histogram_freq=1)
 
     model = tf.keras.models.Sequential([
         tf.keras.layers.Input(shape=(train_data.shape[1],)),
+        tf.keras.layers.Dense(train_data.shape[1], activation='relu'),
+
         tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dropout(0.6),
+
+        tf.keras.layers.Dense(256, activation='relu'),
+        tf.keras.layers.Dropout(0.6),
+
         tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Dropout(0.5),
-        tf.keras.layers.Dense(32, activation='relu'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Dropout(0.5),
-        tf.keras.layers.Dense(2, activation='sigmoid')
+        tf.keras.layers.Dropout(0.6),
+
+        tf.keras.layers.Dense(1, activation='sigmoid')
     ])
     print(train_data)
 
